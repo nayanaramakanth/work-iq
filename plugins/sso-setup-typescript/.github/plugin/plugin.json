@@ -1,0 +1,8 @@
+{
+  "name": "sso-setup-typescript",
+  "description": "Automates end-to-end SSO setup for TypeScript MCP server declarative agent projects — Entra ID app registration, dev tunnel, ATK SSO registration, config patching, validation, and sideload to M365 Copilot. Zero manual portal steps.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Microsoft"
+  }
+}
