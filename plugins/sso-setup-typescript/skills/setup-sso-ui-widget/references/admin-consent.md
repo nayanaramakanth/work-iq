@@ -21,19 +21,10 @@ This reference handles granting admin consent for the User.Read permission.
 > Without admin consent, the SSO flow will show an extra "Allow" consent button instead of seamless sign-in — but it will still work.
 
 ### Execute:
-```powershell
-$consentResult = az ad app permission admin-consent --id $ClientId 2>&1
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "Admin consent granted successfully ✅" -ForegroundColor Green
-} else {
-    Write-Host "========================================" -ForegroundColor Yellow
-    Write-Host "Admin consent CLI command failed — you may not have admin privileges" -ForegroundColor Yellow
-    Write-Host "Options:" -ForegroundColor Yellow
-    Write-Host "  1. Ask your tenant admin to grant consent in Azure Portal" -ForegroundColor Yellow
-    Write-Host "  2. Users will see a one-time consent prompt on first use" -ForegroundColor Yellow
-    Write-Host "========================================" -ForegroundColor Yellow
-}
 ```
+az ad app permission admin-consent --id "$ClientId"
+```
+If the command succeeds, admin consent is granted. If it fails (you are not a tenant admin), either ask your tenant admin to grant consent in the Azure Portal (**App registrations** → your app → **API permissions** → **Grant admin consent**), or rely on the one-time user consent prompt on first use.
 
 ---
 

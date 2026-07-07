@@ -11,136 +11,74 @@
 
 > **CRITICAL**: Use the URI ATK generated (`$AppIdUri`, e.g. `api://...`) — **not** `api://$ClientId`. The service-issued URI is the audience Copilot's SSO tokens will carry, so your backend must accept exactly this value.
 
-```powershell
-if ([string]::IsNullOrWhiteSpace($AppIdUri)) {
-    Write-Host "ERROR: `$AppIdUri is empty. Re-run Phase 5 (ATK OAuth registration) before Step 3." -ForegroundColor Red
-    return
-}
-az ad app update --id $ClientId --identifier-uris "$AppIdUri"
-Write-Host "Application ID URI set → $AppIdUri ✅"
+First confirm `$AppIdUri` is non-empty — if it's empty, re-run Phase 5 (ATK OAuth registration) / `atk provision` before continuing. Then stamp it onto the app:
+```
+az ad app update --id "$ClientId" --identifier-uris "$AppIdUri"
 ```
 
 ### Set the accepted access token version to v2.0
 
 > M365 Copilot SSO requires **v2.0** tokens. The app's `requestedAccessTokenVersion` (shown as `accessTokenAcceptedVersion` in the legacy manifest) must be `2`, otherwise Entra issues v1.0 tokens with a different `aud`/issuer shape and your backend validation will fail.
 
-```powershell
-$tokenVersionBody = @{ api = @{ requestedAccessTokenVersion = 2 } } | ConvertTo-Json -Depth 5 -Compress
-
-$bodyFile = [System.IO.Path]::GetTempFileName()
-$tokenVersionBody | Set-Content -Path $bodyFile -Encoding UTF8
-
-$patchResult = az rest --method PATCH `
-    --uri "https://graph.microsoft.com/v1.0/applications/$ObjectId" `
-    --headers "Content-Type=application/json" `
-    --body "@$bodyFile" 2>&1
-
-Remove-Item $bodyFile -ErrorAction SilentlyContinue
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "ERROR: Failed to set requestedAccessTokenVersion=2. Graph/tenant policy may have blocked the PATCH:" -ForegroundColor Red
-    Write-Host $patchResult -ForegroundColor Red
-    throw "Set access token version failed — do not continue; the app would issue v1.0 tokens."
-}
-Write-Host "Access token version set → v2.0 ✅"
+Build the PATCH body with the helper, apply it, then remove the temp body file:
 ```
+node "$SsoScripts/graph-body.mjs" set-token-version
+```
+Capture the printed path → `$BodyFile`, then:
+```
+az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$ObjectId" --headers "Content-Type=application/json" --body "@$BodyFile"
+node "$SsoScripts/rm.mjs" "$BodyFile"
+```
+If the PATCH fails, STOP — the app would issue v1.0 tokens with a mismatched `aud`/issuer shape and your backend validation would fail.
 
 > **Token validation — important:** Your backend must validate the **`aud` (audience)** claim of incoming SSO tokens. In practice a real M365 Copilot SSO token's `aud` is the **bare client-id GUID** — not the `api://` form and often not the ATK-generated `$AppIdUri` — so validate `aud` against **all** of `[<clientId GUID>, api://<clientId>, $AppIdUri]`. Accepting only `$AppIdUri` will reject valid tokens (401) and trigger an endless sign-in/consent loop. It stays secure because the issuer is tenant-scoped and the token is minted only for your app's clientId. Configure your JWT validation (e.g. express-jwt `audience` option as an array, or an `aud` check in API-plugin middleware) to accept all three forms.
 
 ## Step 2 — Add `access_as_user` Scope
 
-```powershell
-$ScopeId = [guid]::NewGuid().ToString()
-
-$apiBody = @{
-    api = @{
-        oauth2PermissionScopes = @(
-            @{
-                adminConsentDescription = "Allow the application to access the server on behalf of the signed-in user"
-                adminConsentDisplayName = "Access as user"
-                id                      = $ScopeId
-                isEnabled               = $true
-                type                    = "User"
-                userConsentDescription  = "Allow the application to access the server on your behalf"
-                userConsentDisplayName  = "Access as user"
-                value                   = "access_as_user"
-            }
-        )
-    }
-} | ConvertTo-Json -Depth 5 -Compress
-
-$bodyFile = [System.IO.Path]::GetTempFileName()
-$apiBody | Set-Content -Path $bodyFile -Encoding UTF8
-
-$patchResult = az rest --method PATCH `
-    --uri "https://graph.microsoft.com/v1.0/applications/$ObjectId" `
-    --headers "Content-Type=application/json" `
-    --body "@$bodyFile" 2>&1
-
-Remove-Item $bodyFile -ErrorAction SilentlyContinue
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "ERROR: Failed to add the access_as_user scope. Check the az output below:" -ForegroundColor Red
-    Write-Host $patchResult -ForegroundColor Red
-    throw "Add access_as_user scope failed — do not continue."
-}
-Write-Host "Scope: access_as_user ✅"
+Generate a scope ID → `$ScopeId`:
+```
+node "$SsoScripts/uuid.mjs"
+```
+Build the scope PATCH body, apply it, then clean up:
+```
+node "$SsoScripts/graph-body.mjs" add-scope "$ScopeId"
+```
+Capture the printed path → `$BodyFile`, then:
+```
+az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$ObjectId" --headers "Content-Type=application/json" --body "@$BodyFile"
+node "$SsoScripts/rm.mjs" "$BodyFile"
 ```
 
-If the scope already exists (re-run), read its ID instead:
-```powershell
-$existingApp = az ad app show --id $ClientId 2>$null | ConvertFrom-Json
-$existingScope = $existingApp.api.oauth2PermissionScopes | Where-Object { $_.value -eq "access_as_user" }
-if ($existingScope) { $ScopeId = $existingScope.id }
+If the scope already exists (re-run), read its ID instead of generating a new one and capture it → `$ScopeId`:
+```
+az ad app show --id "$ClientId" --query "api.oauth2PermissionScopes[?value=='access_as_user'].id | [0]" -o tsv
 ```
 
 ## Step 3 — Pre-authorize M365 Copilot for the Scope
 
 > For Declarative Agents, only the M365 Copilot client needs pre-authorization — it's the only app that requests tokens on behalf of users to call your agent. This applies identically to MCP and API-plugin agents.
 
-```powershell
-$PreAuthorizedClients = @(
-    "ab3be6b7-f5df-413d-ac2d-abf1e3fd9c0b"   # M365 Copilot
-)
-
-$preAuthApps = $PreAuthorizedClients | ForEach-Object {
-    @{ appId = $_; delegatedPermissionIds = @($ScopeId) }
-}
-
-$preAuthBody = @{
-    api = @{
-        preAuthorizedApplications = $preAuthApps
-    }
-} | ConvertTo-Json -Depth 5 -Compress
-
-$bodyFile = [System.IO.Path]::GetTempFileName()
-$preAuthBody | Set-Content -Path $bodyFile -Encoding UTF8
-
-$patchResult = az rest --method PATCH `
-    --uri "https://graph.microsoft.com/v1.0/applications/$ObjectId" `
-    --headers "Content-Type=application/json" `
-    --body "@$bodyFile" 2>&1
-
-Remove-Item $bodyFile -ErrorAction SilentlyContinue
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "ERROR: Failed to pre-authorize the M365 Copilot client. Check the az output below:" -ForegroundColor Red
-    Write-Host $patchResult -ForegroundColor Red
-    throw "Pre-authorize M365 Copilot failed — do not continue."
-}
-Write-Host "Pre-authorized M365 Copilot client ✅"
+Build the pre-authorization body (M365 Copilot only), apply it, then clean up:
+```
+node "$SsoScripts/graph-body.mjs" preauth "$ScopeId"
+```
+Capture the printed path → `$BodyFile`, then:
+```
+az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$ObjectId" --headers "Content-Type=application/json" --body "@$BodyFile"
+node "$SsoScripts/rm.mjs" "$BodyFile"
 ```
 
 > **Note**: For a Declarative Agent, **M365 Copilot (`ab3be6b7-…`) is the only client that needs pre-authorization** — keep the list to this single entry. Do not add Teams/Office/Outlook client IDs; they are not required for a DA and only widen the app's trust surface.
 
 ## Step 4 — Add User.Read Permission (default)
 
-```powershell
-$existingPerms = az ad app show --id $ClientId --query "requiredResourceAccess" -o json 2>$null | ConvertFrom-Json
-$hasUserRead = $existingPerms | Where-Object { $_.resourceAccess | Where-Object { $_.id -eq "e1fe6dd8-ba31-4d61-89e7-88639da4683d" } }
-if (-not $hasUserRead) {
-    az ad app permission add --id $ClientId --api 00000003-0000-0000-c000-000000000000 --api-permissions e1fe6dd8-ba31-4d61-89e7-88639da4683d=Scope
-    Write-Host "User.Read permission added"
-} else {
-    Write-Host "User.Read already present — skipping"
-}
+List the Microsoft Graph delegated-permission IDs already on the app:
+```
+az ad app show --id "$ClientId" --query "requiredResourceAccess[?resourceAppId=='00000003-0000-0000-c000-000000000000'].resourceAccess[].id" -o tsv
+```
+If the output does NOT contain `e1fe6dd8-ba31-4d61-89e7-88639da4683d` (User.Read), add it:
+```
+az ad app permission add --id "$ClientId" --api 00000003-0000-0000-c000-000000000000 --api-permissions e1fe6dd8-ba31-4d61-89e7-88639da4683d=Scope
 ```
 
 ## Step 5 — Admin Consent
@@ -149,8 +87,8 @@ Read and follow [admin-consent.md](admin-consent.md) for the appropriate tenant-
 
 ## Step 6 — Verify App Registration
 
-```powershell
-az ad app show --id $ClientId --query "{name:displayName, appIdUri:identifierUris[0], tokenVersion:api.requestedAccessTokenVersion, redirectUris:web.redirectUris, scopes:api.oauth2PermissionScopes[].value, preAuthCount:length(api.preAuthorizedApplications), graphPerms:length(requiredResourceAccess)}" -o json
+```
+az ad app show --id "$ClientId" --query "{name:displayName, appIdUri:identifierUris[0], tokenVersion:api.requestedAccessTokenVersion, redirectUris:web.redirectUris, scopes:api.oauth2PermissionScopes[].value, preAuthCount:length(api.preAuthorizedApplications), graphPerms:length(requiredResourceAccess)}" -o json
 ```
 
 Expected: `appIdUri` = the ATK-generated URI (`$AppIdUri`), `tokenVersion` = `2`, scopes = `["access_as_user"]`, preAuthCount = `1` (M365 Copilot), graphPerms = `1`.

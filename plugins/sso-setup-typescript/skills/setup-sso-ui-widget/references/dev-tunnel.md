@@ -11,40 +11,36 @@
 
 ## Login to Dev Tunnel
 
-```powershell
-$devtunnelStatus = devtunnel user show 2>&1
-if ($devtunnelStatus -match "not logged in" -or $LASTEXITCODE -ne 0) {
-    devtunnel user login
-} else {
-    Write-Host "Dev tunnel already logged in ✅"
-}
+Check dev-tunnel login, and log in if needed:
+```
+devtunnel user show
+```
+If that shows you're not logged in, run:
+```
+devtunnel user login
 ```
 
 ## Create Tunnel
 
 > **CRITICAL**: Dev tunnel names must be **all lowercase**, 1-60 chars, matching `[a-z0-9][a-z0-9-]{1,58}[a-z0-9]`. Convert your app name to lowercase and remove any invalid characters.
 
-```powershell
-$TunnelName = "$($AppDisplayName -replace '[^a-z0-9-]', '')-tunnel".ToLower()
-if ($TunnelName.Length -gt 60) { $TunnelName = $TunnelName.Substring(0, 60) }
-# Tunnel names must match [a-z0-9][a-z0-9-]{1,58}[a-z0-9] — trim any leading/trailing
-# hyphen left by sanitizing or truncation so the name stays valid.
-$TunnelName = $TunnelName.Trim('-')
-
+Derive a valid tunnel name from the app name (all-lowercase, valid chars, length-clamped, hyphen-trimmed) → `$TunnelName`:
+```
+node "$SsoScripts/tunnel-name.mjs" "$AppDisplayName"
+```
+Capture `TUNNEL_NAME` → `$TunnelName`, then create the tunnel + port:
+```
 devtunnel create $TunnelName --allow-anonymous --host-header unchanged
 devtunnel port create $TunnelName -p $Port
 ```
 
 ## Get Tunnel URL
 
-```powershell
-$tunnelOutput = devtunnel show $TunnelName
-# Parse the Connect via browser URL — extract the hostname
-$tunnelLine = $tunnelOutput | Where-Object { $_ -match "Connect via browser" -or $_ -match "https://" } | Select-Object -First 1
-$TunnelHost = ($tunnelLine -replace '.*https://', '' -replace '/.*', '').Trim()
-$BaseUrl = "https://$TunnelHost"
-Write-Host "Tunnel URL: $BaseUrl"
+Pipe `devtunnel show` through the parser to extract the host:
 ```
+devtunnel show $TunnelName | node "$SsoScripts/tunnel-url.mjs"
+```
+Capture `TUNNEL_HOST` → `$TunnelHost` and `BASE_URL` → `$BaseUrl`.
 
 > **Dev tunnel hostnames**: Each tunnel has TWO valid hostnames:
 > - **Named**: `<tunnel-name>-<port>.<region>.devtunnels.ms` (stable, based on tunnel name)
@@ -56,11 +52,7 @@ Write-Host "Tunnel URL: $BaseUrl"
 
 ## For Remote / Azure Deployment (skip tunnel)
 
-If the backend is already hosted (Azure App Service, Functions, etc.), you don't need a tunnel — set the URL directly (this is normally captured in Phase 2 when the user chooses "Remote"):
-```powershell
-$BaseUrl = "https://<host>.azurewebsites.net"
-$TunnelHost = "<host>.azurewebsites.net"
-```
+If the backend is already hosted (Azure App Service, Functions, etc.), you don't need a tunnel — set `$BaseUrl` to `https://<host>.azurewebsites.net` and `$TunnelHost` to `<host>.azurewebsites.net` (this is normally captured in Phase 2 when the user chooses "Remote").
 
 ---
 

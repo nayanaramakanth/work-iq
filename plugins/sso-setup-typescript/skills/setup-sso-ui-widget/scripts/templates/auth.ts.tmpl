@@ -1,0 +1,49 @@
+// SSO bearer-token validation for the MCP server (minimal-touch, no express).
+// Verifies the incoming Authorization: Bearer <token> against Entra JWKS and exposes
+// the validated claims per-request via AsyncLocalStorage. No Graph call, no OBO.
+
+import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
+import { AsyncLocalStorage } from "node:async_hooks";
+
+export const claimsStore = new AsyncLocalStorage<JWTPayload | null>();
+
+// IMPORTANT: read env vars LAZILY (inside ensureConfig), NOT at module top-level.
+// Under ESM, this module can be imported BEFORE the server loads dotenv, so a top-level
+// `process.env.TENANT_ID` would capture `undefined` and permanently break JWKS/audience.
+// Resolving config on first request avoids that import-ordering bug.
+let jwks: ReturnType<typeof createRemoteJWKSet> | null = null;
+let audiences: string[] = [];
+let issuers: string[] = [];
+
+function ensureConfig(): void {
+  if (jwks) return;
+  const tenantId = process.env.TENANT_ID;
+  const clientId = process.env.CLIENT_ID;
+  const appIdUri = process.env.APP_ID_URI;
+  if (!tenantId) throw new Error("TENANT_ID not configured");
+  jwks = createRemoteJWKSet(new URL(`https://login.microsoftonline.com/${tenantId}/discovery/v2.0/keys`));
+  // Accept EVERY audience form Entra may emit for this app. A real Copilot SSO token's `aud`
+  // is the BARE client-id GUID (NOT the api:// / App ID URI form), so it MUST be accepted —
+  // otherwise valid tokens 401 and Copilot enters an endless sign-in/consent loop. Still safe:
+  // the issuer is tenant-scoped and the token is minted only for this clientId.
+  // See references/sso-explained.md §3.2.
+  audiences = [clientId, `api://${clientId}`, appIdUri].filter(Boolean) as string[];
+  issuers = [
+    `https://login.microsoftonline.com/${tenantId}/v2.0`,
+    `https://sts.windows.net/${tenantId}/`,
+  ];
+}
+
+export async function validateBearerToken(authHeader?: string): Promise<JWTPayload> {
+  ensureConfig();
+  if (!authHeader || !authHeader.toLowerCase().startsWith("bearer ")) {
+    throw new Error("Missing or malformed Authorization header");
+  }
+  const token = authHeader.slice(authHeader.indexOf(" ") + 1).trim();
+  const { payload } = await jwtVerify(token, jwks!, {
+    audience: audiences,
+    issuer: issuers,
+    algorithms: ["RS256"],
+  });
+  return payload;
+}

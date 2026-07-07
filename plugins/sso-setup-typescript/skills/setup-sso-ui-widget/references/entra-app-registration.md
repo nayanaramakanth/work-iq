@@ -12,31 +12,21 @@
 > **Tell the user FIRST (before running the command):**
 > **🔐 If you're not already signed in, a browser window will pop up for Azure login. Please complete the sign-in there — I'll wait up to 2 minutes for it to finish, then continue automatically.** Do not re-run the step; just sign in once.
 
-```powershell
-# Probe with `az ad signed-in-user show` (Microsoft Graph call) instead of `az account show`.
-# Why: `az account show` requires an ARM subscription context; Entra app registration only needs
-# tenant/Graph context. The Graph probe is the correct "am I signed in for app-registration work?" check.
-$signedIn = az ad signed-in-user show --only-show-errors 2>$null | ConvertFrom-Json
-if (-not $signedIn) {
-    Write-Host "Not signed in to Azure CLI — launching browser. Sign in in the popup; this step will resume automatically." -ForegroundColor Yellow
-    # --allow-no-subscriptions: lets users without an active ARM subscription still sign in for Entra work.
-    # Valid flag on `az login`; NOT valid on `az account show` (that's why we use the Graph probe above).
-    az login --allow-no-subscriptions --only-show-errors | Out-Null
-    $signedIn = az ad signed-in-user show --only-show-errors 2>$null | ConvertFrom-Json
-}
-if (-not $signedIn) {
-    Write-Host "ERROR: Azure login failed. Please run 'az login' manually in this terminal and re-run the skill." -ForegroundColor Red
-    return
-}
-# Tenant comes from the Microsoft Graph /organization endpoint — no subscription required.
-$org = az rest --method GET --uri "https://graph.microsoft.com/v1.0/organization" --only-show-errors 2>$null | ConvertFrom-Json
-$TenantId = $org.value[0].id
-if (-not $TenantId) {
-    Write-Host "ERROR: Could not determine tenant ID from Microsoft Graph. Verify Azure CLI login and Graph access, then re-run the skill." -ForegroundColor Red
-    return
-}
-Write-Host "Logged in as: $($signedIn.userPrincipalName) | Tenant: $TenantId ✅"
+> **Why `az ad signed-in-user show` and not `az account show`?** `az account show` needs an ARM subscription context; Entra app registration only needs tenant/Graph context. The Graph probe is the correct "am I signed in for app-registration work?" check, and `--allow-no-subscriptions` lets users without a subscription sign in.
+
+Check whether you're already signed in — this prints your UPN, or nothing if you're not:
 ```
+az ad signed-in-user show --query userPrincipalName -o tsv
+```
+If nothing printed, sign in (a browser opens — wait up to ~2 min for it), then re-run the check above:
+```
+az login --allow-no-subscriptions --only-show-errors
+```
+Once signed in, read the tenant ID from Microsoft Graph (no subscription required) and capture it → `$TenantId`:
+```
+az rest --method GET --uri "https://graph.microsoft.com/v1.0/organization" --query "value[0].id" -o tsv
+```
+If `$TenantId` is empty, verify Azure CLI login + Graph access and retry before continuing.
 
 ## Step 2 — What This Step Will Do
 
@@ -55,40 +45,33 @@ The default is **single tenant** (`AzureADMyOrg`) — only users in your own org
 > - Question: "Should this app be **single-tenant** (only your organization) or **multi-tenant** (users from any Microsoft Entra organization)? Single-tenant is the default and recommended unless you're shipping to external orgs."
 > - Options: **"Single tenant (default)"** | **"Multi-tenant"**
 
-```powershell
-# Default single-tenant; set to multi-tenant only if the user chose it.
-$SignInAudience = "AzureADMyOrg"          # single tenant
-# If the user chose multi-tenant:
-# $SignInAudience = "AzureADMultipleOrgs" # multi-tenant
-Write-Host "Sign-in audience: $SignInAudience"
-```
+Set `$SignInAudience` to `AzureADMyOrg` (single-tenant, the default) — or `AzureADMultipleOrgs` only if the user chose multi-tenant.
 
 ## Step 4 — Create App Registration
 
 > ⛔ **CRITICAL**: You MUST run `az ad app create` below. Do NOT search for existing apps. Do NOT reuse any ClientId from a previous conversation.
 
-```powershell
-$appJson = az ad app create --display-name "$AppDisplayName" --sign-in-audience $SignInAudience 2>$null
-$app = $appJson | ConvertFrom-Json
-$ClientId = $app.appId
-$ObjectId = $app.id
-Write-Host "App created: $AppDisplayName | Client ID: $ClientId"
+Create the app and capture its Client ID → `$ClientId`:
+```
+az ad app create --display-name "$AppDisplayName" --sign-in-audience $SignInAudience --query appId -o tsv
+```
+Then read its Object ID → `$ObjectId`:
+```
+az ad app show --id "$ClientId" --query id -o tsv
 ```
 
 ## Step 5 — Create Service Principal
 
-```powershell
-az ad sp create --id $ClientId 2>$null
-Write-Host "Service principal created ✅"
+```
+az ad sp create --id "$ClientId"
 ```
 
 ## Step 6 — Set the Copilot Redirect URI
 
 > The single redirect URI M365 Copilot's SSO flow uses is `oAuthConsentRedirect`. This matches ATK's `oauth/register` default redirect — no other redirect URIs are needed.
 
-```powershell
-az ad app update --id $ClientId --web-redirect-uris "https://teams.microsoft.com/api/platform/v1.0/oAuthConsentRedirect"
-Write-Host "Redirect URI set ✅"
+```
+az ad app update --id "$ClientId" --web-redirect-uris "https://teams.microsoft.com/api/platform/v1.0/oAuthConsentRedirect"
 ```
 
 ---
