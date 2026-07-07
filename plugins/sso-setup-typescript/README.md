@@ -1,8 +1,8 @@
-# SSO Setup (TypeScript)
+# SSO Setup for ui-widget Agents (TypeScript)
 
-Automates end-to-end SSO setup for **TypeScript MCP server declarative agent** projects targeting Microsoft 365 Copilot.
+Adds Entra SSO to a **Microsoft 365 Copilot declarative agent built with the `ui-widget-developer` skill** (OAI Apps path — `mcpPlugin.json` + a raw-http MCP server).
 
-The skill drives every step from the terminal — Entra ID app registration, dev tunnel creation, ATK SSO registration, config patching, validation, and sideload — with zero manual Azure Portal or Teams Developer Portal steps.
+The skill drives every step from the terminal — Entra ID app registration, ATK SSO registration, `mcpPlugin.json` auth wiring, a minimal JWKS token guard, validation, and sideload — reusing your existing dev tunnel. SSO only — no OBO. Zero manual Azure Portal or Teams Developer Portal steps.
 
 ## Installation
 
@@ -14,20 +14,21 @@ The skill drives every step from the terminal — Entra ID app registration, dev
 
 ### Local install (for testing)
 
-Clone this repo and point Copilot CLI at the plugin folder, or copy the `skills/setup-sso/` directory into your project's `.github/skills/` folder.
+Clone this repo and point Copilot CLI at the plugin folder, or copy the `skills/setup-sso-ui-widget/` directory into your project's `.github/skills/` folder.
 
 ## Usage
 
-After installation, ask Copilot to run SSO setup against your TypeScript MCP server declarative agent project:
+After building your agent with the `ui-widget-developer` skill, ask Copilot to add SSO:
 
 ```
-# Run end-to-end SSO setup
-"Set up SSO for my agent"
-"Configure SSO authentication for this MCP server"
-"Register an Entra app and wire up SSO"
+# Add SSO to a ui-widget agent
+"Add SSO to my ui-widget agent"
+"Setup SSO for ui widget skill"
+"Wire Entra auth for my ui widget MCP server"
+"Configure only SSO, no OBO"
 ```
 
-The skill answers 1–2 questions and does the rest automatically.
+The skill reuses your running dev tunnel, answers a couple of questions, and does the rest automatically.
 
 ## Prerequisites
 
@@ -40,32 +41,25 @@ The skill checks (and offers to install) these on first run:
 
 ## Project requirements
 
-> **Important**: This skill expects an **existing TypeScript MCP server declarative agent project**. It does **not** scaffold the server code itself — `atk new` only scaffolds the agent shell (`appPackage/`, `m365agents.yml`); it does not generate a Node/Express MCP server.
+> **Important**: This skill expects an **existing ui-widget agent project** built with the `ui-widget-developer` skill (OAI Apps path). It does **not** scaffold the server code — it adds SSO on top of your existing widget + MCP server.
 
 The skill is designed for projects that have all of the following:
 
-- `package.json` with an `express-jwt` dependency
-- `tsconfig.json` or `src/index.ts` (TypeScript)
-- `m365agents.yml` (ATK project)
-- An MCP server in `src/` using `express` + `express-jwt` + `jwks-rsa` for token validation
-- An `appPackage/` (or `DeclarativeAgent/`) folder containing `declarativeAgent.json`, `manifest.json`, and `ai-plugin.json`
+- `appPackage/mcpPlugin.json` (the ui-widget MCP plugin manifest)
+- A raw-http MCP server folder (e.g. `mcp-server/`) using `@modelcontextprotocol/sdk`
+- `m365agents.yml` / `m365agents.local.yml` (ATK project)
+- A **running dev tunnel** and `env/.env.local` (written by the ui-widget tunnel script)
 
 If your project is missing any of the above, the skill exits with a clear error during its workspace check — it never tries to create the missing files for you.
 
 ### How to get a project that meets these requirements
 
-You have two options:
-
-1. **Use an internal generator** (Microsoft IT): the `MyProfileMCP_SSO_TypeScript_Template` from the AgentTemplatesHub produces a project that already meets every requirement above. Generate the project, then run this skill on top.
-2. **Hand-roll**: scaffold the agent shell with the [`declarative-agent-developer`](https://github.com/microsoft/work-iq/tree/main/plugins/microsoft-365-agents-toolkit/skills/declarative-agent-developer) skill (or `atk new -c declarative-agent-with-action-from-mcp`), then add `package.json`, `tsconfig.json`, and `src/index.ts` with an Express MCP server using `express-jwt`.
-
-> A sibling skill that scaffolds the Express MCP server boilerplate end-to-end is planned as a follow-up.
+Build the agent first with the [`ui-widget-developer`](https://github.com/microsoft/work-iq/tree/main/plugins/microsoft-365-agents-toolkit/skills/ui-widget-developer) skill (OAI Apps path), start its dev tunnel + MCP server, then run this skill on top.
 
 ## Skills
 
 | Skill | What It Does |
 |-------|-------------|
-| [**setup-sso**](./skills/setup-sso/SKILL.md) | End-to-end SSO setup: Entra app registration, dev tunnel, ATK SSO registration, config patching, sideload to M365 Copilot |
 | [**setup-sso-ui-widget**](./skills/setup-sso-ui-widget/SKILL.md) | SSO for `ui-widget-developer` agents (OAI Apps): adapts to the `mcpPlugin.json` + `mcp-server/` layout, reuses the existing dev tunnel, injects a minimal JWKS guard (no express rewrite), wires `OAuthPluginVault`, sideloads, and prints app-registration details. SSO only — no OBO. |
 
 ## License

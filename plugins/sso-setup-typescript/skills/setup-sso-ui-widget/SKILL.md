@@ -2,8 +2,8 @@
 name: setup-sso-ui-widget
 description: >
   Adds Entra SSO to a Microsoft 365 Copilot declarative agent that was built with the
-  ui-widget-developer skill (OAI Apps path). Unlike setup-sso (which targets express-jwt
-  projects with ai-plugin.json), this skill ADAPTS to the ui-widget project layout:
+  ui-widget-developer skill (OAI Apps path). This skill is purpose-built for the
+  ui-widget project layout:
   appPackage/mcpPlugin.json, a raw-http MCP server under mcp-server/, an already-running
   named devtunnel, and env/.env.local. It reuses the existing tunnel (never creates a second
   one), injects a minimal JWKS bearer-token guard into the existing MCP server WITHOUT
@@ -15,10 +15,10 @@ description: >
 
 # Setup SSO for a ui-widget-developer Agent (Minimal-Touch, No OBO)
 
-> **Why this exists.** The `ui-widget-developer` skill produces a project shape that the
-> base `setup-sso` skill does NOT understand: it emits `appPackage/mcpPlugin.json`
-> (not `ai-plugin.json`), a raw Node `http` MCP server under `mcp-server/` (no express,
-> no express-jwt), a **named devtunnel that is already running**, and `env/.env.local`.
+> **Why this exists.** The `ui-widget-developer` skill produces a distinctive project shape:
+> it emits `appPackage/mcpPlugin.json` (not `ai-plugin.json`), a raw Node `http` MCP server
+> under `mcp-server/` (no express, no express-jwt), a **named devtunnel that is already
+> running**, and `env/.env.local`.
 > This skill adapts to that layout instead of re-scaffolding, so the user's widget server
 > stays intact.
 
@@ -30,7 +30,7 @@ description: >
 
 > **CRITICAL EXECUTION RULES — READ BEFORE PROCEEDING:**
 > - Execute every `az`, `devtunnel`, `atk`, `npm`, and PowerShell command in the TERMINAL yourself. Do NOT tell the user to run them.
-> - Do NOT improvise alternate approaches for the Entra/ATK steps — reuse the shared reference files under `../setup-sso/references/`.
+> - Do NOT improvise alternate approaches for the Entra/ATK steps — reuse the shared reference files under `references/`.
 > - Execute commands ONE AT A TIME, check output, diagnose failures, retry — never skip.
 > - **NO SCRATCH FILES — PATTERN-BASED, NOT NAME-BASED**: Run commands **directly** in the terminal and keep all state in shell variables. NEVER create a file whose purpose is to capture, stage, or read back command output — *regardless of its name or extension* (`.txt`, `.json`, `.log`, `.ps1`, …). This ban covers redirecting with `>`, `Out-File`, `Tee-Object`, or `Set-Content` so you can read the result later. Concrete violations seen in testing that are FORBIDDEN: `atk provision ... > atk_prov_out.txt`, `az ad app show ... > appverify.json`, plus `sso-step*.ps1`, `sso-*.log`, `sso-*.txt`, `sso-state.json`, `*-precheck.txt`, `server-sso.*.log`, `server-pid.txt`. The ONLY files this skill writes are the ones explicitly shown in its phases (`auth.ts`, edits to `mcpPlugin.json` / `declarativeAgent.json` / `env/.env.local` / `m365agents.local.yml` / `m365agents.yml` / the MCP server entry file). Do NOT delete or alter the ui-widget skill's own files (`tunnel.log`, `server.log`, `pids.txt`, etc.).
 > - **TERMINAL OUTPUT LAGS? DO NOT REDIRECT TO A FILE.** If the terminal renders "one step behind", capture the output into a variable in the SAME shell and print it — no file: `$out = az ad app show --id $ClientId 2>&1 | Out-String; $out`. For `atk provision`, do NOT scrape stdout at all — read the generated values straight from `env/.env.local` (Phase 4d). Re-running a read-only query (`az ... show`) is always safe. Inventing a file to work around lag is never acceptable.
@@ -83,7 +83,7 @@ if (-not ($hasAtk -and $AppPackageDir -and $hasMcpPlugin -and $McpServerDir)) {
     Write-Host "ERROR: This does not look like a ui-widget-developer project." -ForegroundColor Red
     Write-Host "Expected: m365agents.yml + $AppPackageDir/mcpPlugin.json + an MCP server folder with @modelcontextprotocol/sdk." -ForegroundColor Red
     if ($hasAiPlugin -and -not $hasMcpPlugin) {
-        Write-Host "Found ai-plugin.json instead of mcpPlugin.json — use the base 'setup-sso' skill for that project shape." -ForegroundColor Yellow
+        Write-Host "Found ai-plugin.json instead of mcpPlugin.json — this skill is for the mcpPlugin.json (OAI Apps) layout." -ForegroundColor Yellow
     }
     Write-Host "Build the agent first with the ui-widget-developer skill (OAI Apps path), then re-run this skill." -ForegroundColor Yellow
     return
@@ -157,13 +157,13 @@ if ($BaseUrl) {
 }
 ```
 
-> **If `$BaseUrl` is still empty after this step**, read and execute `../setup-sso/references/dev-tunnel.md` to create ONE tunnel on `$Port`, then capture `$TunnelName`, `$BaseUrl`, `$TunnelHost`. Otherwise SKIP tunnel creation entirely — the tunnel is already running.
+> **If `$BaseUrl` is still empty after this step**, read and execute `references/dev-tunnel.md` to create ONE tunnel on `$Port`, then capture `$TunnelName`, `$BaseUrl`, `$TunnelHost`. Otherwise SKIP tunnel creation entirely — the tunnel is already running.
 
 ---
 
 ## Phase 3 — Step 1: Create the Entra ID App (EXECUTE)
 
-Read and execute **every step** in `../setup-sso/references/entra-app-registration.md`.
+Read and execute **every step** in `references/entra-app-registration.md`.
 
 After completion you MUST have: `$ClientId`, `$ObjectId`, `$TenantId`.
 
@@ -274,8 +274,8 @@ Write-Host "App ID URI: $AppIdUri ✅"
 
 ## Phase 5 — Step 3: Update the Entra ID App (EXECUTE)
 
-Read and execute **every step** in `../setup-sso/references/entra-app-update.md` using `$AppIdUri`.
-This sets the Application ID URI, exposes `access_as_user`, pre-authorizes M365 Copilot, adds `User.Read`, and submits admin consent (see `../setup-sso/references/admin-consent.md`).
+Read and execute **every step** in `references/entra-app-update.md` using `$AppIdUri`.
+This sets the Application ID URI, exposes `access_as_user`, pre-authorizes M365 Copilot, adds `User.Read`, and submits admin consent (see `references/admin-consent.md`).
 
 After completion you MUST have `$ScopeId` set and the app verified.
 
@@ -596,5 +596,5 @@ Write-Host "SSO scratch cleaned — ui-widget logs (tunnel.log/server.log/pids.t
 
 - **Two tunnels?** This skill reuses the tunnel from `env/.env.local`. If you ever see a second tunnel, stop it and keep the named one the ui-widget script created.
 - **401 in Copilot (not local):** server audience must equal `$AppIdUri` and issuer tenant `$TenantId` — confirm `env/.env.local` and that the server loads it. (See §5 of `sso-explained.md`.)
-- **`mcpPlugin.json` vs `ai-plugin.json`:** if the project actually has `ai-plugin.json`, use the base `setup-sso` skill instead — this skill is specifically for the ui-widget `mcpPlugin.json` layout.
+- **`mcpPlugin.json` vs `ai-plugin.json`:** this skill is specifically for the ui-widget `mcpPlugin.json` layout; `ai-plugin.json` (express-jwt) projects aren't supported here.
 - **No OBO here.** For Microsoft Graph / downstream APIs, use a separate OBO flow later (out of scope). See §7 of `sso-explained.md` for what that delta looks like.
