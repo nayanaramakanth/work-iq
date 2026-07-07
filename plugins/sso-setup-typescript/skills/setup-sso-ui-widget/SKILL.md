@@ -285,16 +285,26 @@ After completion you MUST have `$ScopeId` set and the app verified.
 
 The ui-widget runtime ships with `auth: { "type": "None" }`. Switch it to the SSO registration.
 
-```powershell
-$mcp = Get-Content $mcpPluginPath -Raw | ConvertFrom-Json -Depth 30
-foreach ($rt in $mcp.runtimes) {
-    if ($rt.type -eq "RemoteMCPServer") {
-        $rt.auth = [pscustomobject]@{ type = "OAuthPluginVault"; reference_id = $AuthId }
-        # spec.url stays as the ${{MCP_SERVER_URL}}/mcp placeholder so ATK keeps resolving it from env/.env.local.
-    }
+> **🔀 Cross-platform (de-PowerShell POC).** This uses a small **Node** helper instead of PowerShell JSON cmdlets — Node is already a project dependency, so it runs identically on Windows/macOS/Linux with no `jq` or PowerShell. Arguments (not env vars) are passed so the invocation is the same in every shell.
+
+Write `mcp-server/scripts/sso-patch-mcpplugin.mjs`:
+```js
+import { readFileSync, writeFileSync } from "node:fs";
+const [pluginPath, authId] = process.argv.slice(2);
+const mcp = JSON.parse(readFileSync(pluginPath, "utf8"));
+for (const rt of mcp.runtimes ?? []) {
+  if (rt.type === "RemoteMCPServer") {
+    // spec.url stays as the ${{MCP_SERVER_URL}}/mcp placeholder so ATK resolves it from env/.env.local.
+    rt.auth = { type: "OAuthPluginVault", reference_id: authId };
+  }
 }
-$mcp | ConvertTo-Json -Depth 30 | Set-Content $mcpPluginPath -Encoding UTF8
-Write-Host "mcpPlugin.json: runtime auth → OAuthPluginVault ($AuthId) ✅"
+writeFileSync(pluginPath, JSON.stringify(mcp, null, 2) + "\n", "utf8");
+console.log(`mcpPlugin.json: runtime auth -> OAuthPluginVault (${authId})`);
+```
+
+Run it (identical in bash, zsh, and PowerShell):
+```
+node mcp-server/scripts/sso-patch-mcpplugin.mjs "<mcpPluginPath>" "<AuthId>"
 ```
 
 > Do NOT hardcode the tunnel URL into `spec.url`. Leave the `${{MCP_SERVER_URL}}/mcp` placeholder; ATK fills it from `env/.env.local` (the value the ui-widget tunnel script wrote).
@@ -462,14 +472,26 @@ if (req.method === "POST" && url.pathname === "/mcp") {
 
 The ui-widget server already loads `env/.env.local` via dotenv, so write the audience there.
 
-```powershell
-$envFile = "env/.env.local"
-$content = Get-Content $envFile
-$content = Set-EnvLine $content "TENANT_ID"  $TenantId
-$content = Set-EnvLine $content "CLIENT_ID"  $ClientId
-$content = Set-EnvLine $content "APP_ID_URI" $AppIdUri
-$content | Set-Content $envFile -Encoding UTF8
-Write-Host "env/.env.local: TENANT_ID, CLIENT_ID, APP_ID_URI written ✅ (server audience = $AppIdUri)"
+> **🔀 Cross-platform (de-PowerShell POC).** A Node helper upserts the env keys — replaces the PowerShell `Set-EnvLine` + `Set-Content`.
+
+Write `mcp-server/scripts/sso-write-env.mjs`:
+```js
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
+const [envFile, ...pairs] = process.argv.slice(2); // pairs: KEY=VALUE
+const lines = existsSync(envFile) ? readFileSync(envFile, "utf8").split(/\r?\n/) : [];
+for (const pair of pairs) {
+  const eq = pair.indexOf("=");
+  const key = pair.slice(0, eq), val = pair.slice(eq + 1);
+  const i = lines.findIndex((l) => l.startsWith(key + "="));
+  if (i >= 0) lines[i] = `${key}=${val}`; else lines.push(`${key}=${val}`);
+}
+writeFileSync(envFile, lines.join("\n"), "utf8");
+console.log(`env updated: ${pairs.map((p) => p.slice(0, p.indexOf("="))).join(", ")}`);
+```
+
+Run it (any shell):
+```
+node mcp-server/scripts/sso-write-env.mjs "env/.env.local" "TENANT_ID=<TenantId>" "CLIENT_ID=<ClientId>" "APP_ID_URI=<AppIdUri>"
 ```
 
 > If the MCP server loads a DIFFERENT env file (check its `dotenv.config({ path: ... })`), write these three keys into THAT file instead.
