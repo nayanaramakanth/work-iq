@@ -5,6 +5,10 @@
 > you (and what it does not), how a token flows end-to-end at runtime, and how to go
 > further (OBO / Microsoft Graph) once SSO is in place. Read this first if you want the
 > mental model before (or while) running the skill.
+>
+> For the broader authentication picture — Entra SSO vs third-party OAuth, the auth
+> pattern chooser, and the `oauth/register` lifecycle — see the **`authentication.md`**
+> reference in the `declarative-agent-developer` skill (`microsoft-365-agents-toolkit`).
 
 ---
 
